@@ -1,0 +1,49 @@
+set,substance,theme,posts,matched_posts,percent
+Set 1,fentanyl,Clinics,73,47366,0.15411898830384665
+Set 1,fentanyl,Contamination / lacing,2357,47366,4.976143225098172
+Set 1,fentanyl,Cost / insurance,356,47366,0.751593970358485
+Set 1,fentanyl,Overdose,4133,47366,8.725668200819152
+Set 1,fentanyl,Prescriptions / pharmacies,1489,47366,3.143605117594899
+Set 1,fentanyl,Take-home medication,25,47366,0.05278047544652282
+Set 1,fentanyl,Treatment / recovery,528,47366,1.114723641430562
+Set 1,fentanyl,Withdrawal,149,47366,0.314571633661276
+Set 1,methadone,Clinics,1341,8374,16.013852400286602
+Set 1,methadone,Contamination / lacing,7,8374,0.08359207069500836
+Set 1,methadone,Cost / insurance,185,8374,2.209219011225221
+Set 1,methadone,Overdose,221,8374,2.639121089085264
+Set 1,methadone,Prescriptions / pharmacies,508,8374,6.066395987580607
+Set 1,methadone,Take-home medication,24,8374,0.28660138524002865
+Set 1,methadone,Treatment / recovery,917,8374,10.950561261046095
+Set 1,methadone,Withdrawal,231,8374,2.758538332935276
+Set 1,suboxone,Clinics,185,5307,3.4859619370642547
+Set 1,suboxone,Contamination / lacing,4,5307,0.07537214999057848
+Set 1,suboxone,Cost / insurance,134,5307,2.524967024684379
+Set 1,suboxone,Overdose,78,5307,1.4697569248162803
+Set 1,suboxone,Prescriptions / pharmacies,190,5307,3.580177124552478
+Set 1,suboxone,Take-home medication,2,5307,0.03768607499528924
+Set 1,suboxone,Treatment / recovery,513,5307,9.66647823629169
+Set 1,suboxone,Withdrawal,215,5307,4.051253061993593
+Set 2,fentanyl,Clinics,54,34320,0.15734265734265734
+Set 2,fentanyl,Contamination / lacing,1251,34320,3.645104895104895
+Set 2,fentanyl,Cost / insurance,229,34320,0.6672494172494172
+Set 2,fentanyl,Overdose,2926,34320,8.525641025641026
+Set 2,fentanyl,Prescriptions / pharmacies,826,34320,2.406759906759907
+Set 2,fentanyl,Take-home medication,61,34320,0.17773892773892774
+Set 2,fentanyl,Treatment / recovery,395,34320,1.150932400932401
+Set 2,fentanyl,Withdrawal,136,34320,0.3962703962703963
+Set 2,methadone,Clinics,1750,9742,17.96345719564771
+Set 2,methadone,Contamination / lacing,9,9742,0.09238349414904537
+Set 2,methadone,Cost / insurance,171,9742,1.755286388831862
+Set 2,methadone,Overdose,431,9742,4.424142886470951
+Set 2,methadone,Prescriptions / pharmacies,747,9742,7.667830014370765
+Set 2,methadone,Take-home medication,294,9742,3.0178608088688152
+Set 2,methadone,Treatment / recovery,1207,9742,12.389653048655306
+Set 2,methadone,Withdrawal,294,9742,3.0178608088688152
+Set 2,suboxone,Clinics,200,3850,5.194805194805195
+Set 2,suboxone,Contamination / lacing,2,3850,0.05194805194805195
+Set 2,suboxone,Cost / insurance,113,3850,2.935064935064935
+Set 2,suboxone,Overdose,83,3850,2.155844155844156
+Set 2,suboxone,Prescriptions / pharmacies,143,3850,3.7142857142857144
+Set 2,suboxone,Take-home medication,16,3850,0.4155844155844156
+Set 2,suboxone,Treatment / recovery,494,3850,12.831168831168831
+Set 2,suboxone,Withdrawal,174,3850,4.51948051948052
