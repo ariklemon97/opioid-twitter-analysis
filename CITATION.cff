@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Please cite this repository when using the analysis code or aggregate summary data."
+type: software
+authors:
+  - family-names: Lemon
+    given-names: Arik
+title: "Opioid discourse on Twitter during the emergence of COVID-19"
+repository-code: "https://github.com/ariklemon97/opioid-twitter-analysis"
+url: "https://github.com/ariklemon97/opioid-twitter-analysis"
+date-released: 2026-10-23
