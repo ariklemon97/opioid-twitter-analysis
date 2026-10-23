@@ -1,0 +1,491 @@
+---
+title: "Assignment 1 - Arik Lemon"
+output:
+  html_document:
+    toc: true
+---
+
+Questions are answered in assignment order. Questions 1–2 use all posts;
+Questions 3–8 analyze posts tagged English.
+
+## Setup: load the data
+
+```{r setup, message=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(tm)
+library(SnowballC)
+library(tidytext)
+library(wordcloud)
+library(ggplot2)
+
+set1 <- read_csv("data/TADA_A1_set1.csv", show_col_types = FALSE)
+set2 <- read_csv("data/TADA_A1_set2.csv", show_col_types = FALSE)
+
+set1$set <- "Set 1"
+set2$set <- "Set 2"
+tweets <- bind_rows(set1, set2)
+```
+
+## 1. What are the date ranges for the two sets? What information is provided in the CSV files? What are the languages in which tweets have been posted?
+
+`location` is profile text, not the post's location.
+
+```{r data-overview}
+tweets |>
+  group_by(set) |>
+  summarise(first_date = min(as.Date(date)),
+            last_date = max(as.Date(date)), .groups = "drop")
+
+original_columns <- setdiff(names(set1), "set")
+column_types <- vapply(set1[original_columns], function(x) {
+  paste(class(x), collapse = "/")
+}, character(1))
+
+tibble(
+  column = original_columns,
+  type = column_types,
+  information = c("Identifier supplied with each post", "Date of the post",
+                  "Supplied language code", "Post text", "Profile location text")
+) |> knitr::kable()
+# `set` was added in Setup; it is not an original CSV field.
+
+tweets |>
+  count(set, lang) |>
+  pivot_wider(names_from = set, values_from = n, values_fill = 0) |>
+  arrange(desc(`Set 1` + `Set 2`)) |>
+  knitr::kable()
+```
+
+## 2. What is the total number of posts in set 1? What is the total in set 2?
+
+`total_posts` includes all languages; `english_posts` is used in Questions 3–8.
+
+```{r total-posts}
+tweets |>
+  group_by(set) |>
+  summarise(total_posts = n(), english_posts = sum(lang == "en", na.rm = TRUE),
+            .groups = "drop")
+```
+
+## 3. How many tweets are there for methadone, Suboxone, and fentanyl in total?
+
+Counts are per post and per substance. Categories may overlap; duplicate rows
+remain separate observations.
+
+### Step 1: prepare the text
+
+Use English posts. Normalize case and accents; remove links and usernames. Keep
+numbers for dose matching.
+
+```{r prepare-text}
+substances <- c("methadone", "suboxone", "fentanyl")
+english_tweets <- tweets |>
+  filter(lang == "en") |>
+  mutate(row_id = row_number(), date = as.Date(date))
+
+english_tweets$text <- stringi::stri_trans_general(english_tweets$text, "Latin-ASCII")
+english_tweets$text <- tolower(english_tweets$text)
+english_tweets$text <- str_remove_all(english_tweets$text, "\\p{Cf}")
+english_tweets$text <- gsub("https?://\\S+|www\\.\\S+|@[[:alnum:]_]+",
+                            " ", english_tweets$text, perl = TRUE)
+english_tweets$text <- gsub("&amp;|&", " and ", english_tweets$text)
+english_tweets$text <- gsub("$uboxone", "suboxone", english_tweets$text, fixed = TRUE)
+english_tweets$text <- str_squish(english_tweets$text)
+
+whole_word <- function(x) paste0("\\b(?:", x, ")\\b")
+```
+
+### Step 2: build the name dictionary
+
+Only listed names and spelling variants count. Fentanyl analogs are counted in
+Question 4.
+
+```{r name-lists}
+# Count only these listed drug names and variants.
+named_drugs <- list(
+  methadone = c("methadone", "methadose", "dolophine", "methodone"),
+  suboxone = c("suboxone", "suboxon", "suboxen"),
+  fentanyl = c("fentanyl", "fentynal", "fentanil")
+)
+dictionary <- named_drugs
+
+# Keep analogs separate from parent fentanyl; allow spaced and hyphenated names.
+analog_patterns <- c(
+  methoxyacetylfentanyl = "\\bmethoxyacetyl[ -]?fentan[yi]l\\b",
+  carfentanil = "\\b(?:carfentan[yi]l|carfentenil|carefentanyl|carfentayl|carfentantil|carfenta|carfent)\\b",
+  acetylfentanyl = "\\b(?:acetyl|acety)[ -]?fentan[yi]l\\b",
+  furanylfentanyl = "\\bfuranyl[ -]?fentan[yi]l\\b",
+  cyclopropylfentanyl = "\\bcyclopropyl[ -]?fentan[yi]l\\b",
+  acrylfentanyl = "\\bacryl[ -]?fentan[yi]l\\b",
+  butyrylfentanyl = "\\bbut(?:yryl|yr|iryl)[ -]?fentan[yi]l\\b",
+  valerylfentanyl = "\\bvaleryl[ -]?fentan[yi]l\\b",
+  benzylfentanyl = "\\bbenzyl[ -]?fentan[yi]l\\b",
+  crotonylfentanyl = "\\bcrotonyl[ -]?fentan[yi]l\\b",
+  methylfentanyl = "\\b(?:(?:alpha|3)[ -]?)?methyl[ -]?fentan[yi]l\\b",
+  fluorofentanyl = "\\b(?:(?:4|para)[ -]?)?fluoro[ -]?fentan[yi]l\\b",
+  ocfentanil = "\\bocfentan[yi]l\\b",
+  alfentanil = "\\balfentan[yi]l\\b",
+  sufentanil = "\\bsufentan[yi]l\\b",
+  remifentanil = "\\bremifentan[yi]l\\b"
+)
+```
+
+Candidate words are one edit from a drug name, or two edits and present in at
+least five posts. These are discovery candidates; only variants in the
+dictionary above are counted.
+
+```{r spelling-candidates}
+# Count a word once per post, then find close spellings of each drug name.
+word_rows <- english_tweets |>
+  transmute(row_id, word = str_extract_all(text, "\\b[a-z][a-z0-9]{5,10}\\b")) |>
+  unnest(word) |>
+  distinct(row_id, word)
+word_counts <- word_rows |> count(word, name = "posts")
+
+spelling_candidates <- list()
+for (seed in substances) {
+  candidates <- word_counts |>
+    filter(abs(nchar(word) - nchar(seed)) <= 2,
+           !word %in% unlist(named_drugs)) |>
+    mutate(distance = as.integer(adist(word, seed))) |>
+    filter(distance == 1 | (distance == 2 & posts >= 5),
+           !word %in% c("methane", "methadrone"),
+           !str_detect(word, paste(analog_patterns, collapse = "|"))) |>
+    mutate(substance = seed)
+  spelling_candidates[[seed]] <- candidates
+}
+spelling_candidates <- bind_rows(spelling_candidates) |>
+  arrange(substance, desc(posts), word)
+
+spelling_candidates |>
+  group_by(substance) |>
+  slice_head(n = 10) |>
+  ungroup() |>
+  select(substance, candidate = word, posts, distance) |>
+  knitr::kable()
+```
+
+### Step 3: match names and hashtags
+
+Expand listed names inside hashtags, then match whole words. Remove analog names
+before matching parent fentanyl. Count each post once per substance.
+
+```{r match-hashtags-and-names}
+name_patterns <- list()
+for (substance in substances) {
+  name_patterns[[substance]] <- whole_word(paste(dictionary[[substance]], collapse = "|"))
+}
+combo_pattern <- "\\bbuprenorphine\\s*(?:[/+-]|and|with)\\s*naloxone\\b"
+
+# Match known compounds first so an analog is not split into parent fentanyl.
+other_modified_names <- "(?:nor|despropionyl|ohme|7m)fentan[yi]l"
+hashtag_names <- c(other_modified_names,
+                   gsub("\\b", "", analog_patterns, fixed = TRUE),
+                   unlist(dictionary, use.names = FALSE))
+hashtag_pattern <- paste0("(", paste(hashtag_names, collapse = "|"), ")")
+expand_hashtag <- function(tags) {
+  tags <- gsub("#|_", " ", tags)
+  str_replace_all(tags, hashtag_pattern, " \\1 ")
+}
+english_tweets$text <- str_replace_all(english_tweets$text, "#[a-z0-9_]+", expand_hashtag)
+english_tweets$text <- str_squish(english_tweets$text)
+
+parent_text <- str_replace_all(english_tweets$text,
+                              paste(analog_patterns, collapse = "|"), " ")
+english_tweets <- english_tweets |>
+  mutate(methadone = str_detect(text, name_patterns[["methadone"]]),
+         suboxone = str_detect(text, name_patterns[["suboxone"]]) |
+           str_detect(text, combo_pattern),
+         fentanyl = str_detect(parent_text, name_patterns[["fentanyl"]]))
+
+analysis_text <- english_tweets$text
+for (analog in names(analog_patterns)) {
+  analysis_text <- str_replace_all(analysis_text, analog_patterns[[analog]], analog)
+}
+for (substance in substances) {
+  analysis_text <- str_replace_all(analysis_text, name_patterns[[substance]], substance)
+}
+analysis_text <- str_replace_all(analysis_text, combo_pattern, "suboxone")
+substance_counts <- english_tweets |>
+  group_by(set) |>
+  summarise(english_posts = n(),
+            any_substance = sum(methadone | suboxone | fentanyl),
+            across(all_of(substances), ~sum(.x)), .groups = "drop")
+substance_counts |> knitr::kable()
+english_tweets |>
+  summarise(english_posts = n(),
+            any_substance = sum(methadone | suboxone | fentanyl),
+            across(all_of(substances), ~sum(.x))) |> knitr::kable()
+```
+
+## 4. Are there fentanyl analogs that are also being discussed (e.g., carfentanil)?
+
+The reference-based dictionary includes spelling, spacing, and hyphen variants;
+additional names were identified by searching the tweet vocabulary for `fent`.
+Norfentanyl is excluded. Counts are per post; parent fentanyl and any analog are
+reported separately.
+
+```{r analogs}
+# One column per analog: TRUE means that its name occurs in the post.
+analog_flags <- list()
+for (analog in names(analog_patterns)) {
+  analog_flags[[analog]] <- str_detect(english_tweets$text, analog_patterns[[analog]])
+}
+analog_flags <- as.data.frame(analog_flags)
+analog_counts <- bind_cols(english_tweets |> select(set), analog_flags) |>
+  group_by(set) |>
+  summarise(across(all_of(names(analog_patterns)), ~sum(.x)), .groups = "drop") |>
+  pivot_longer(-set, names_to = "analog", values_to = "posts")
+analog_counts |>
+  pivot_wider(names_from = set, values_from = posts) |>
+  mutate(total = `Set 1` + `Set 2`) |>
+  arrange(desc(total)) |> knitr::kable()
+
+english_tweets$any_analog <- rowSums(analog_flags) > 0
+english_tweets |>
+  group_by(set) |>
+  summarise(parent_fentanyl = sum(fentanyl),
+            fentanyl_or_analog = sum(fentanyl | any_analog),
+            any_analog = sum(any_analog), .groups = "drop")
+```
+
+References: [DEA](https://www.dea.gov/sites/default/files/pr/speeches-testimony/2017t/062717t.pdf),
+[US Sentencing Commission](https://www.ussc.gov/research/research-reports/fentanyl-and-fentanyl-analogues-federal-trends-and-trafficking-patterns),
+[CDC](https://www.cdc.gov/mmwr/volumes/69/wr/mm6910a4.htm),
+[CDC analog list](https://www.cdc.gov/mmwr/volumes/68/wr/mm6834a2.htm),
+[acrylfentanyl study](https://pubmed.ncbi.nlm.nih.gov/27476446/), and
+[FDA review](https://www.accessdata.fda.gov/drugsatfda_docs/nda/pre96/020630Orig1s000rev.pdf).
+This is a focused name search, not an exhaustive inventory or evidence of exposure.
+
+## 5. What are some of the topics that are most closely associated with each of the three substances?
+
+Summarize associated words, common words, and predefined treatment/harm keywords.
+
+### Preprocess the corpus as in Labs 2 and 3
+
+Lowercase, remove punctuation, numbers, and stopwords, then stem and build the
+document-term matrix. Keep unstemmed text for drug matching and bigrams.
+
+```{r make-dtm}
+# Lab text processing; drug names were normalized in Question 3.
+corpus <- Corpus(VectorSource(analysis_text))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+myStopWords <- c(stopwords("english"), "rt", "amp")
+corpus <- tm_map(corpus, removeWords, myStopWords)
+corpus <- tm_map(corpus, stemDocument, language = "english")
+corpus <- tm_map(corpus, stripWhitespace)
+dtm <- DocumentTermMatrix(corpus)
+clean_text <- sapply(corpus, as.character)
+```
+
+### Associated and common words
+
+`findAssocs()` reports correlations with stemmed drug names. The top-word table
+reports counts and percentages of matched posts (each word counted once per post).
+
+```{r find-associated-terms}
+# Prune the sparse association matrix for `findAssocs()`.
+association_dtm <- removeSparseTerms(dtm, 0.995)
+drug_stems <- wordStem(substances, language = "english")
+associations <- findAssocs(association_dtm, drug_stems, 0.1)
+names(associations) <- substances
+associations
+
+memberships <- english_tweets |>
+  select(row_id, set, all_of(substances)) |>
+  pivot_longer(all_of(substances), names_to = "substance", values_to = "mentioned") |>
+  filter(mentioned)
+substance_sizes <- memberships |> count(substance, name = "matched_posts")
+
+# Remove focal drug stems so the summaries emphasize surrounding content.
+cloud_stopwords <- c(drug_stems, "fent")
+word_posts <- tibble(row_id = english_tweets$row_id, text = clean_text) |>
+  unnest_tokens(word, text) |>
+  filter(str_detect(word, "^[a-z]+$"), nchar(word) > 2,
+         !word %in% cloud_stopwords) |>
+  distinct(row_id, word)
+term_rates <- word_posts |>
+  inner_join(memberships |> select(row_id, substance), by = "row_id",
+             relationship = "many-to-many") |>
+  count(substance, word, name = "posts") |>
+  left_join(substance_sizes, by = "substance") |>
+  mutate(percent = 100 * posts / matched_posts)
+top_terms <- term_rates |>
+  group_by(substance) |>
+  slice_max(posts, n = 10, with_ties = FALSE) |>
+  ungroup() |>
+  select(substance, word, posts, percent)
+top_terms |> knitr::kable(digits = 1)
+```
+
+### Treatment and harm-related topics
+
+Search unstemmed text for the listed keywords. Heatmap values are percentages of
+matched posts; categories can overlap and are not model-discovered topics.
+
+```{r theme-vocabulary, fig.width=10, fig.height=6}
+theme_patterns <- c(
+  "Treatment / recovery" = "\\b(treatment|recovery|rehab)\\b",
+  "Clinics" = "\\bclinics?\\b",
+  "Take-home medication" = "\\btake[ -]?homes?\\b",
+  "Prescriptions / pharmacies" = "\\b(prescriptions?|pharmac[yi][[:alpha:]]*)\\b",
+  "Cost / insurance" = "\\b(costs?|expensive|afford[[:alpha:]]*|insurance)\\b",
+  "Withdrawal" = "\\bwithdrawals?\\b",
+  "Overdose" = "\\boverdose[ds]?\\b|\\boverdosing\\b",
+  "Contamination / lacing" = "\\b(laced|lacing|contaminat[[:alpha:]]*)\\b"
+)
+# One yes/no column per keyword category.
+theme_flags <- list()
+for (topic in names(theme_patterns)) {
+  theme_flags[[topic]] <- str_detect(english_tweets$text, theme_patterns[[topic]])
+}
+theme_flags <- as.data.frame(theme_flags, check.names = FALSE)
+theme_rates <- bind_cols(english_tweets |> select(row_id), theme_flags) |>
+  pivot_longer(-row_id, names_to = "theme", values_to = "present") |>
+  inner_join(memberships |> select(row_id, set, substance), by = "row_id",
+             relationship = "many-to-many") |>
+  group_by(set, substance, theme) |>
+  summarise(posts = sum(present), matched_posts = n(),
+            percent = 100 * posts / matched_posts, .groups = "drop") |>
+  mutate(theme = factor(theme, levels = rev(names(theme_patterns))))
+
+theme_rates |>
+  group_by(substance, theme) |>
+  summarise(posts = sum(posts), matched_posts = sum(matched_posts),
+            percent = 100 * posts / matched_posts, .groups = "drop") |>
+  group_by(substance) |>
+  slice_max(percent, n = 5, with_ties = FALSE) |>
+  ungroup() |> select(substance, theme, posts, percent) |>
+  knitr::kable(digits = 1)
+
+ggplot(theme_rates, aes(set, theme, fill = percent)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.1f", percent)), size = 3) +
+  facet_wrap(~substance) +
+  scale_fill_gradient(low = "#f1f5f9", high = "#2878a0", name = "% of posts") +
+  labs(x = NULL, y = NULL, title = "Treatment and harm-related vocabulary",
+       subtitle = "Cell values: % of posts mentioning the substance in that set") +
+  theme_minimal(base_size = 11) + theme(panel.grid = element_blank())
+```
+
+## 6. Generate word clouds for each set, so that they can be shown to the researcher.
+
+One cloud per dataset; word size reflects the number of posts containing the word.
+
+```{r word-clouds, fig.height=6, fig.width=8}
+set.seed(740)
+for (period in c("Set 1", "Set 2")) {
+  words <- word_posts |>
+    inner_join(english_tweets |> filter(set == period) |> select(row_id),
+               by = "row_id") |>
+    count(word, sort = TRUE)
+  wordcloud(words$word, words$n, max.words = 60, min.freq = 2,
+            random.order = FALSE, scale = c(3.5, 0.6))
+  title(main = paste(period, "- English posts"))
+}
+```
+
+## 7. Generate appropriate figures to compare how the frequencies of mentions of these substances differ.
+
+Use percentages of English posts because set sizes differ. Categories can overlap;
+the collection periods do not support a clean pre/post-pandemic comparison.
+
+### Mentions by dataset
+
+Bar heights show percentages; labels show the number of matching posts.
+
+```{r compare-sets, fig.width=8, fig.height=5}
+mention_counts <- substance_counts |>
+  select(set, english_posts, all_of(substances)) |>
+  pivot_longer(all_of(substances), names_to = "substance", values_to = "posts") |>
+  mutate(percent = 100 * posts / english_posts)
+mention_counts
+
+ggplot(mention_counts, aes(substance, percent, fill = set)) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_text(aes(label = format(posts, big.mark = ",")),
+            position = position_dodge(width = 0.9), vjust = -0.4, size = 3) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = "% of English posts", title = "Substance mentions by set",
+       subtitle = "Labels show post counts; categories can overlap") +
+  theme_minimal()
+```
+
+### Weekly trends
+
+Weekly percentages use each week's English-post count as the denominator.
+
+```{r mentions-over-time, fig.width=9, fig.height=5}
+# Monday-starting calendar weeks, kept separate across the gap between sets.
+weekly_counts <- english_tweets |>
+  mutate(week = as.Date(cut(date, "week", start.on.monday = TRUE))) |>
+  group_by(set, week) |>
+  summarise(english_posts = n(), observed_days = n_distinct(date),
+            across(all_of(substances), ~sum(.x)), .groups = "drop") |>
+  pivot_longer(all_of(substances), names_to = "substance", values_to = "posts") |>
+  mutate(percent = 100 * posts / english_posts)
+ggplot(weekly_counts, aes(week, percent, group = set)) +
+  geom_line() + geom_point(size = 1.2) +
+  facet_wrap(~substance) +
+  geom_vline(xintercept = as.Date("2020-03-11"), linetype = "dashed") +
+  labs(x = "Week starting Monday", y = "% of English posts that week",
+       title = "Weekly substance mentions",
+       subtitle = "Dashed line: March 11, 2020; all panels use the same scale") +
+  theme_minimal()
+```
+
+Dashed line: [WHO pandemic declaration, March 11, 2020](https://www.who.int/news-room/speeches/item/who-director-general-s-opening-remarks-at-the-media-briefing-on-covid-19---11-march-2020).
+
+## 8. Find the top 10 most frequent bigrams in each of the three sets. Plot a bar chart for these.
+
+Find the ten most frequent adjacent word pairs in each substance-matched group.
+Pairs containing English stopwords are removed; repeated pairs count repeatedly.
+
+```{r bigrams, fig.width=8, fig.height=5}
+bigram_counts <- english_tweets |>
+  select(row_id, text) |>
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) |>
+  separate(bigram, into = c("word1", "word2"), sep = " ") |>
+  filter(!word1 %in% stopwords("english"),
+         !word2 %in% stopwords("english")) |>
+  unite(bigram, word1, word2, sep = " ")
+
+top_bigrams <- list()
+for (substance in substances) {
+  matched_posts <- english_tweets |>
+    filter(.data[[substance]]) |>
+    select(row_id)
+  top10 <- bigram_counts |>
+    inner_join(matched_posts, by = "row_id") |>
+    count(bigram, sort = TRUE) |>
+    slice_head(n = 10)
+
+  top_bigrams[[substance]] <- mutate(top10, substance = substance)
+  print(top10)
+
+  print(ggplot(top10, aes(reorder(bigram, n), n)) +
+          geom_col() + coord_flip() +
+          labs(x = NULL, y = "Count", title = paste("Bigrams:", substance)))
+}
+```
+
+```{r save-final-results, include=FALSE}
+dir.create("results", showWarnings = FALSE)
+write_csv(substance_counts, "results/substance_counts.csv")
+write_csv(spelling_candidates, "results/spelling_candidates.csv")
+write_csv(mention_counts, "results/mention_percentages.csv")
+write_csv(analog_counts, "results/analog_counts.csv")
+write_csv(top_terms, "results/top_terms.csv")
+write_csv(theme_rates, "results/topic_vocabulary.csv")
+write_csv(weekly_counts, "results/weekly_mentions.csv")
+write_csv(bind_rows(top_bigrams), "results/top_bigrams.csv")
+tibble(substance = rep(names(dictionary), lengths(dictionary)),
+       term = unlist(dictionary, use.names = FALSE)) |>
+  write_csv("results/name_variants.csv")
+```
+
