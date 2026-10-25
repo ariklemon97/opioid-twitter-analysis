@@ -1,6 +1,6 @@
 # Opioid discourse on Twitter during the emergence of COVID-19
 
-R analysis and aggregate summary data accompanying Arik Lemon’s BSHES 740 report comparing methadone, Suboxone, and fentanyl mentions in two course-provided Twitter datasets.
+R analysis and aggregate summary data accompanying my BSHES 740 report comparing methadone, Suboxone, and fentanyl mentions in two course-provided Twitter datasets.
 
 ## Files
 
